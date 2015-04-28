@@ -179,6 +179,8 @@ void run_client(int port, char* server_addr)
 
     while (1)
     {
+        printf("Enter message:");
+        fflush(stdout);
       //создаем множество для мультиплексировния stdin и socket'a
         fd_set read_set;
         FD_ZERO(&read_set);
@@ -197,13 +199,15 @@ void run_client(int port, char* server_addr)
         {
             int len;
             read_code = getline(&line, &len, stdin);
-            if (read_code == -1)
+            if (read_code <= 0)
             {
                 break;
             }
             line[read_code - 1] = '\0';
-            //printf("%d, %s\n", strlen(line), line);
-            send(write_socket, line, strlen(line) + 1, 0);//SEND ALLLLLLL!!!!!!!!!!!!!
+            if (strlen(line) != 0)
+            {
+                send_message(line, write_socket, strlen(line) + 1);
+            }
         }
       //(2) пришло сообшение с сервера, необходимо напечатать
         if (FD_ISSET(write_socket, &read_set))
@@ -214,7 +218,7 @@ void run_client(int port, char* server_addr)
                 free(line);
                 exit(EXIT_FAILURE);
             }
-            printf("Server told: %s\n", buffer);
+            printf("\rServer told: %s\n", buffer);
         }
     }
 
@@ -223,8 +227,7 @@ void run_client(int port, char* server_addr)
     printf("Goodbye client!\n");
 }
 
-void read_args(int argc, char** argv, int* mode, 
-               char** addr, int* port)
+void read_args(int argc, char** argv, int* mode, char** addr, int* port)
 {
     if (argc < 3)
     {
@@ -272,5 +275,5 @@ int main(int argc, char** argv)
     {
         run_client(port, addr);
     }
-    return 0;
+    return EXIT_SUCCESS;
 }
