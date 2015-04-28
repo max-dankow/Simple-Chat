@@ -12,7 +12,7 @@ const size_t MAX_CLIENT_NUMBER = 100;
 const size_t BUFFER_SIZE = 1024;
 const int IS_FREE = 0;
 
-int init_connection_socket(int port)
+int init_socket_for_connection(int port)
 {
     int listen_socket = -1;
   //создаем сокет  
@@ -64,10 +64,9 @@ void send_back_to_all(char* text, const int* connections, int sender)
 
 void run_server(int port)
 {
-    printf("Hello server: %d!\n", port);
-    int listen_socket = init_connection_socket(port);
+    printf("Server started. Port is %d!\n", port);
+    int listen_socket = init_socket_for_connection(port);
     listen(listen_socket, 2);
-    printf("listen is %d\n", listen_socket);
     int active_connections[MAX_CLIENT_NUMBER];
     memset(active_connections, 0, MAX_CLIENT_NUMBER * sizeof(int));
     char buffer[BUFFER_SIZE];
@@ -104,7 +103,6 @@ void run_server(int port)
         if (FD_ISSET(listen_socket, &read_set))
         {
             int connector_socket = accept(listen_socket, NULL, NULL);    
-
             if (connector_socket == -1)
             {
                 perror("Accept");
@@ -129,7 +127,6 @@ void run_server(int port)
                 }
             }
         }
-
       //(2) получили сообщение от клиента
         for (size_t i = 0; i < MAX_CLIENT_NUMBER; ++i)
         {
@@ -150,12 +147,12 @@ void run_server(int port)
     }
 
     close(listen_socket);
-    printf("Goodbye server!\n");
+    printf("Server terminated.\n");
 }
 
 void run_client(int port, char* server_addr)
 {
-    printf("Hello client!\n");
+    printf("Welcome!\n");
   //создаем сокет  
     int write_socket = socket(AF_INET, SOCK_STREAM, 0);
     if(write_socket < 0)
@@ -224,7 +221,7 @@ void run_client(int port, char* server_addr)
 
     free(line);
     close(write_socket);
-    printf("Goodbye client!\n");
+    printf("Goodbye!\n");
 }
 
 void read_args(int argc, char** argv, int* mode, char** addr, int* port)
