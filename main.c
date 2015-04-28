@@ -35,6 +35,33 @@ int init_connection_socket(int port)
     return listen_socket;
 }
 
+int send_message(char* text, int fd, size_t length)
+{
+    size_t current = 0;
+    while (current < length)
+    {
+        int code = send(fd, text + current, length - current, 0);
+        if (code == -1)
+        {
+            return -1;
+        }
+        current += code;
+    }
+}
+
+void send_back_to_all(char* text, const int* connections, int sender)
+{
+    size_t message_length = strlen(text) + 1;
+    for (size_t i = 0; i < MAX_CLIENT_NUMBER; ++i)
+    {
+        if (connections[i] != IS_FREE && i != sender)
+        {
+            send_message(text, connections[i], message_length);
+            printf("resended to %d\n", i);
+        }
+    }
+}
+
 void run_server(int port)
 {
     printf("Hello server: %d!\n", port);
@@ -117,7 +144,7 @@ void run_server(int port)
                     continue;
                 }
                 printf("Server got: %s\n", buffer);
-                //send(, buffer, code, 0);
+                send_back_to_all(buffer, active_connections, i);
             }
         }
     }
@@ -146,14 +173,52 @@ void run_client(int port, char* server_addr)
         perror("Connect");
         exit(EXIT_FAILURE);
     }
+    int read_code = 0;
+    char buffer[BUFFER_SIZE];
+    char* line = (char*) malloc(BUFFER_SIZE);
 
-    for (int i = 0; i < 10; ++i)
+    while (1)
     {
-        char str[100];
-        scanf("%s", str);
-        send(write_socket, str, strlen(str)+1, 0);
+      //создаем множество для мультиплексировния stdin и socket'a
+        fd_set read_set;
+        FD_ZERO(&read_set);
+        FD_SET(0, &read_set);
+        FD_SET(write_socket, &read_set);
+      //ожидаем событий ввода  
+        int code = select(write_socket + 1, &read_set, NULL, NULL, NULL);
+        if (code == -1)
+        {
+            perror("Select error.");
+            free(line);
+            exit(EXIT_FAILURE);
+        }
+      //(1) ввели сообщение с клавиатуры, нужно отослать
+        if (FD_ISSET(0, &read_set))
+        {
+            int len;
+            read_code = getline(&line, &len, stdin);
+            if (read_code == -1)
+            {
+                break;
+            }
+            line[read_code - 1] = '\0';
+            //printf("%d, %s\n", strlen(line), line);
+            send(write_socket, line, strlen(line) + 1, 0);//SEND ALLLLLLL!!!!!!!!!!!!!
+        }
+      //(2) пришло сообшение с сервера, необходимо напечатать
+        if (FD_ISSET(write_socket, &read_set))
+        {
+            code = recv(write_socket, buffer, BUFFER_SIZE, 0);
+            if (code <= 0)
+            {
+                free(line);
+                exit(EXIT_FAILURE);
+            }
+            printf("Server told: %s\n", buffer);
+        }
     }
 
+    free(line);
     close(write_socket);
     printf("Goodbye client!\n");
 }
