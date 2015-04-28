@@ -9,11 +9,12 @@
 #include <unistd.h>
 
 const size_t MAX_CLIENT_NUMBER = 100;
+const size_t BUFFER_SIZE = 1024;
 const int IS_FREE = 0;
 
 int init_connection_socket(int port)
 {
-    int listen_socket;
+    int listen_socket = -1;
   //создаем сокет  
     listen_socket = socket(AF_INET, SOCK_STREAM, 0);
     if (listen_socket == -1)
@@ -37,26 +38,21 @@ int init_connection_socket(int port)
 void run_server(int port)
 {
     printf("Hello server: %d!\n", port);
-    printf("FLAG-DEBUG1!\n");
     int listen_socket = init_connection_socket(port);
-    printf("FLAG-DEBUG2!\n");
+    listen(listen_socket, 2);
+    printf("listen is %d\n", listen_socket);
     int active_connections[MAX_CLIENT_NUMBER];
-    printf("FLAG-DEBUG3!\n");
-    memset(active_connections, 0, MAX_CLIENT_NUMBER);
-    printf("FLAG-DEBUG4!\n");
+    memset(active_connections, 0, MAX_CLIENT_NUMBER * sizeof(int));
+    char buffer[BUFFER_SIZE];
 
     while(1)
     {
       //создаем множество дескрипторов, отслеживемых для чтения  
         fd_set read_set;
-        printf("FLAG-DEBUG5!\n");
         FD_ZERO(&read_set);
-        printf("FLAG-DEBUG6!\n");
       //добавляем в него всех подключившихся уже клиентов и сокет для подключения
         FD_SET(listen_socket, &read_set);
-        printf("FLAG-DEBUG7!\n");
         int max = listen_socket;
-        printf("FLAG-DEBUG8!\n");
         for (size_t i = 0; i < MAX_CLIENT_NUMBER; ++i)
         {
             if (active_connections[i] != IS_FREE)
@@ -69,8 +65,9 @@ void run_server(int port)
             }
         }
       //ждем событий на чтение
+        printf("waiting...\n");
         int code = select(max + 1, &read_set, NULL, NULL, NULL);
-        if (code = -1)
+        if (code == -1)
         {
             perror("Select error.");
             exit(EXIT_FAILURE);
@@ -79,7 +76,7 @@ void run_server(int port)
       //(1) получили запрос на подключение
         if (FD_ISSET(listen_socket, &read_set))
         {
-            int connector_socket = accept(listen_socket,NULL, NULL);    
+            int connector_socket = accept(listen_socket, NULL, NULL);    
 
             if (connector_socket == -1)
             {
@@ -103,6 +100,24 @@ void run_server(int port)
                     fprintf(stderr, "Too many clients.\n");
                     exit(EXIT_FAILURE);
                 }
+            }
+        }
+
+      //(2) получили сообщение от клиента
+        for (size_t i = 0; i < MAX_CLIENT_NUMBER; ++i)
+        {
+            if (active_connections[i] != IS_FREE && FD_ISSET(active_connections[i], &read_set))
+            {
+                code = recv(active_connections[i], buffer, BUFFER_SIZE, 0);
+                if(code <= 0) 
+                {
+                    printf("Disconnected.\n");
+                    close(active_connections[i]);
+                    active_connections[i] = IS_FREE;
+                    continue;
+                }
+                printf("Server got: %s\n", buffer);
+                //send(, buffer, code, 0);
             }
         }
     }
@@ -131,7 +146,16 @@ void run_client(int port, char* server_addr)
         perror("Connect");
         exit(EXIT_FAILURE);
     }
+
+    for (int i = 0; i < 10; ++i)
+    {
+        char str[100];
+        scanf("%s", str);
+        send(write_socket, str, strlen(str)+1, 0);
+    }
+
     close(write_socket);
+    printf("Goodbye client!\n");
 }
 
 void read_args(int argc, char** argv, int* mode, 
