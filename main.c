@@ -76,30 +76,35 @@ void run_server(int port)
       //создаем множество дескрипторов, отслеживемых для чтения  
         fd_set read_set;
         FD_ZERO(&read_set);
+      //создаем множество для отслеживания ошибок в дескрипторах  
+        fd_set error_set;
+        FD_ZERO(&error_set);
       //добавляем в него всех подключившихся уже клиентов и сокет для подключения
         FD_SET(listen_socket, &read_set);
         int max = listen_socket;
+      //заполняем оба множества дескрипторами клиентов  
         for (size_t i = 0; i < MAX_CLIENT_NUMBER; ++i)
         {
             if (active_connections[i] != IS_FREE)
             {
                 FD_SET(active_connections[i], &read_set);
+                FD_SET(active_connections[i], &error_set);
                 if (active_connections[i] > max)
                 {
                     max = active_connections[i];
                 }
             }
         }
-      //ждем событий на чтение
+      //ждем событий
         printf("waiting...\n");
-        int code = select(max + 1, &read_set, NULL, NULL, NULL);
+        int code = select(max + 1, &read_set, NULL, &error_set, NULL);
         if (code == -1)
         {
             perror("Select error.");
             exit(EXIT_FAILURE);
         }
       //проверяем, что произошло:
-      //(1) получили запрос на подключение
+      //получили запрос на подключение
         if (FD_ISSET(listen_socket, &read_set))
         {
             int connector_socket = accept(listen_socket, NULL, NULL);    
@@ -127,25 +132,34 @@ void run_server(int port)
                 }
             }
         }
-      //(2) получили сообщение от клиента
+      //проверяем события клиентов
         for (size_t i = 0; i < MAX_CLIENT_NUMBER; ++i)
         {
-            if (active_connections[i] != IS_FREE && FD_ISSET(active_connections[i], &read_set))
+            if (active_connections[i] != IS_FREE)
             {
-                code = recv(active_connections[i], buffer, BUFFER_SIZE, 0);
-                if(code <= 0) 
+                if (FD_ISSET(active_connections[i], &error_set))
                 {
-                    printf("Disconnected.\n");
+                    printf("Disconnected(error_set).\n");
                     close(active_connections[i]);
                     active_connections[i] = IS_FREE;
                     continue;
                 }
-                printf("Server got: %s\n", buffer);
-                send_back_to_all(buffer, active_connections, i);
+                if (FD_ISSET(active_connections[i], &read_set))
+                {
+                    code = recv(active_connections[i], buffer, BUFFER_SIZE, 0);
+                    if(code <= 0) 
+                    {
+                        printf("Disconnected.\n");
+                        close(active_connections[i]);
+                        active_connections[i] = IS_FREE;
+                        continue;
+                    }
+                    printf("Server got: %s\n", buffer);
+                    send_back_to_all(buffer, active_connections, i);
+                }
             }
         }
     }
-
     close(listen_socket);
     printf("Server terminated.\n");
 }
