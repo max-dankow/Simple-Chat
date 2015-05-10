@@ -7,10 +7,14 @@
 #include <arpa/inet.h>
 #include <sys/select.h>
 #include <unistd.h>
+#include <pthread.h>
 
 const size_t MAX_CLIENT_NUMBER = 100;
 const size_t BUFFER_SIZE = 1024;
 const int IS_FREE = 0;
+
+int active_connections[100];
+pthread_t client_threads[100];
 
 int init_socket_for_connection(int port)
 {
@@ -48,66 +52,90 @@ int send_message(char* text, int fd, size_t length)
         current += code;
     }
 }
+int receive_message(char* text, int fd, size_t length)
+{
+    size_t current = 0;
+    while (current < length)
+    {
+        int code = recv(fd, text + current, length - current, 0);
+        if (code == -1)
+        {
+            return -1;
+        }
+        current += code;
+    }
+}
 
 void send_back_to_all(char* text, const int* connections, int sender)
 {
-    size_t message_length = strlen(text) + 1;
+    size_t message_length = strlen(text);
     for (size_t i = 0; i < MAX_CLIENT_NUMBER; ++i)
     {
         if (connections[i] != IS_FREE && i != sender)
         {
+            send_message(&message_length, connections[i], sizeof(message_length));
             send_message(text, connections[i], message_length);
             printf("resended to %d\n", i);
         }
     }
 }
 
+void* process_client(void* arg)
+{
+    int* sock_ptr = (int*) arg;
+    int sock = *sock_ptr;
+    int my_number = sock_ptr - active_connections;
+    printf("My number is %d\n", my_number);
+    while (1)
+    {
+      //получаем длину сообщения
+        size_t message_len;
+        int code;
+        code = recv(sock, &message_len, sizeof(message_len), 0);
+        if (code <= 0)
+        {
+            break;
+        }
+      //получаем все сообщение  
+        char* text = (char*) malloc(message_len + 1);
+        if (receive_message(text, sock, message_len) == -1)
+        {
+            break;
+        }
+        printf("Server got: %s\n", text);
+        send_back_to_all(text, active_connections, my_number);
+        free(text);
+    }
+    printf("Disconnected.\n");
+    *sock_ptr = IS_FREE;
+    return NULL;
+}
+
 void run_server(int port)
 {
     printf("Server started. Port is %d!\n", port);
     int listen_socket = init_socket_for_connection(port);
-    listen(listen_socket, 2);
-    int active_connections[MAX_CLIENT_NUMBER];
+    listen(listen_socket, 20);
     memset(active_connections, 0, MAX_CLIENT_NUMBER * sizeof(int));
     char buffer[BUFFER_SIZE];
 
     while(1)
     {
-      //создаем множество дескрипторов, отслеживемых для чтения  
         fd_set read_set;
         FD_ZERO(&read_set);
-      //создаем множество для отслеживания ошибок в дескрипторах  
-        fd_set error_set;
-        FD_ZERO(&error_set);
-      //добавляем в него всех подключившихся уже клиентов и сокет для подключения
+        FD_SET(0, &read_set);
         FD_SET(listen_socket, &read_set);
-        int max = listen_socket;
-      //заполняем оба множества дескрипторами клиентов  
-        for (size_t i = 0; i < MAX_CLIENT_NUMBER; ++i)
-        {
-            if (active_connections[i] != IS_FREE)
-            {
-                FD_SET(active_connections[i], &read_set);
-                FD_SET(active_connections[i], &error_set);
-                if (active_connections[i] > max)
-                {
-                    max = active_connections[i];
-                }
-            }
-        }
-      //ждем событий
-        printf("waiting...\n");
-        int code = select(max + 1, &read_set, NULL, &error_set, NULL);
+      //ожидаем событий ввода  
+        int code = select(listen_socket + 1, &read_set, NULL, NULL, NULL);
         if (code == -1)
         {
             perror("Select error.");
             exit(EXIT_FAILURE);
         }
-      //проверяем, что произошло:
-      //получили запрос на подключение
+      //(1)получили запрос на подключение
         if (FD_ISSET(listen_socket, &read_set))
         {
-            int connector_socket = accept(listen_socket, NULL, NULL);    
+            int connector_socket = accept(listen_socket, NULL, NULL);
             if (connector_socket == -1)
             {
                 perror("Accept");
@@ -115,49 +143,43 @@ void run_server(int port)
             else
             {
                 printf("New client connected!\n");
-              //добавим нового клиента в "список" активных клиентов
+              //добавляем нового клиента в список
+                ssize_t new_client_index = -1;
                 for (size_t i = 0; i < MAX_CLIENT_NUMBER; ++i)
                 {
                     if (active_connections[i] == IS_FREE)
                     {
                         active_connections[i] = connector_socket;
-                        connector_socket = IS_FREE;
+                        new_client_index = i;
                         break;
                     }
                 }
-                if (connector_socket != IS_FREE)
+                if (new_client_index == -1)
                 {
                     fprintf(stderr, "Too many clients.\n");
                     exit(EXIT_FAILURE);
                 }
+              //запускаем обработку запросов клиента
+                if (pthread_create(client_threads + new_client_index, NULL, &process_client,
+                    active_connections + new_client_index) == -1)
+                {
+                    perror("pthread_create");
+                    exit(EXIT_FAILURE);
+                }
             }
         }
-      //проверяем события клиентов
-        for (size_t i = 0; i < MAX_CLIENT_NUMBER; ++i)
+      //(2) нажатие на клавиатуре  
+        if (FD_ISSET(0, &read_set))
         {
-            if (active_connections[i] != IS_FREE)
+            printf("Terminateing...\n");
+            for (size_t i = 0; i < MAX_CLIENT_NUMBER; ++i)
             {
-                if (FD_ISSET(active_connections[i], &error_set))
+                if (active_connections[i] != IS_FREE)
                 {
-                    printf("Disconnected(error_set).\n");
-                    close(active_connections[i]);
-                    active_connections[i] = IS_FREE;
-                    continue;
-                }
-                if (FD_ISSET(active_connections[i], &read_set))
-                {
-                    code = recv(active_connections[i], buffer, BUFFER_SIZE, 0);
-                    if(code <= 0) 
-                    {
-                        printf("Disconnected.\n");
-                        close(active_connections[i]);
-                        active_connections[i] = IS_FREE;
-                        continue;
-                    }
-                    printf("Server got: %s\n", buffer);
-                    send_back_to_all(buffer, active_connections, i);
+                    pthread_join(client_threads[i], NULL);
                 }
             }
+            break;
         }
     }
     close(listen_socket);
@@ -215,21 +237,31 @@ void run_client(int port, char* server_addr)
                 break;
             }
             line[read_code - 1] = '\0';
-            if (strlen(line) != 0)
+            size_t length = strlen(line);
+            if (length != 0)
             {
-                send_message(line, write_socket, strlen(line) + 1);
+                send_message(&length, write_socket, sizeof(length));
+                send_message(line, write_socket, strlen(line));
             }
         }
       //(2) пришло сообшение с сервера, необходимо напечатать
         if (FD_ISSET(write_socket, &read_set))
         {
-            code = recv(write_socket, buffer, BUFFER_SIZE, 0);
+          //получаем длину сообщения  
+            size_t message_len;
+            int code;
+            code = recv(write_socket, &message_len, sizeof(message_len), 0);
             if (code <= 0)
             {
-                free(line);
-                exit(EXIT_FAILURE);
+                break;
             }
-            printf("\rServer told: %s\n", buffer);
+          //получаем все сообщение  
+            char* text = (char*) malloc(message_len + 1);
+            if (receive_message(text, write_socket, message_len) == -1)
+            {
+                break;
+            }
+            printf("\rServer told: %s\n", text);
         }
     }
 
